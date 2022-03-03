@@ -1,225 +1,226 @@
-import os
-import sys
-import numpy as np
+# coding=UTF-8
+importÂ os
+importÂ sys
+importÂ numpyÂ asÂ np
 
-import argparse
+importÂ argparse
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
+importÂ torch
+importÂ torch.nnÂ asÂ nn
+importÂ torch.optimÂ asÂ optim
+importÂ torch.nn.functionalÂ asÂ F
+importÂ torch.backends.cudnnÂ asÂ cudnn
 
-import torchvision
-import torchvision.transforms as transforms
-from torch.autograd import Variable
+importÂ torchvision
+importÂ torchvision.transformsÂ asÂ transforms
+fromÂ torch.autogradÂ importÂ Variable
 
-from differential_evolution import differential_evolution
+fromÂ differential_evolutionÂ importÂ differential_evolution
 
-parser = argparse.ArgumentParser(description='One pixel attack with PyTorch')
-parser.add_argument('--pixels', default=1, type=int, help='The number of pixels that can be perturbed.')
-parser.add_argument('--maxiter', default=100, type=int, help='The maximum number of iteration in the DE algorithm.')
-parser.add_argument('--popsize', default=400, type=int, help='The number of adverisal examples in each iteration.')
-parser.add_argument('--samples', default=100, type=int, help='The number of image samples to attack.')
-parser.add_argument('--targeted', action='store_true', help='Set this switch to test for targeted attacks.')
-parser.add_argument('--save', default='./results/results.pkl', help='Save location for the results with pickle.')
-parser.add_argument('--verbose', action='store_true', help='Print out additional information every iteration.')
+parserÂ =Â argparse.ArgumentParser(description='OneÂ pixelÂ attackÂ withÂ PyTorch')
+parser.add_argument('--pixels',Â default=1,Â type=int,Â help='TheÂ numberÂ ofÂ pixelsÂ thatÂ canÂ beÂ perturbed.')
+parser.add_argument('--maxiter',Â default=100,Â type=int,Â help='TheÂ maximumÂ numberÂ ofÂ iterationÂ inÂ theÂ DEÂ algorithm.')
+parser.add_argument('--popsize',Â default=400,Â type=int,Â help='TheÂ numberÂ ofÂ adverisalÂ examplesÂ inÂ eachÂ iteration.')
+parser.add_argument('--samples',Â default=100,Â type=int,Â help='TheÂ numberÂ ofÂ imageÂ samplesÂ toÂ attack.')
+parser.add_argument('--targeted',Â action='store_true',Â help='SetÂ thisÂ switchÂ toÂ testÂ forÂ targetedÂ attacks.')
+parser.add_argument('--save',Â default='./results/results.pkl',Â help='SaveÂ locationÂ forÂ theÂ resultsÂ withÂ pickle.')
+parser.add_argument('--verbose',Â action='store_true',Â help='PrintÂ outÂ additionalÂ informationÂ everyÂ iteration.')
 
-args = parser.parse_args()
-import torch.nn as nn
-import torch.utils.model_zoo as model_zoo
-from IPython import embed
-from collections import OrderedDict
+argsÂ =Â parser.parse_args()
+importÂ torch.nnÂ asÂ nn
+importÂ torch.utils.model_zooÂ asÂ model_zoo
+fromÂ IPythonÂ importÂ embed
+fromÂ collectionsÂ importÂ OrderedDict
 
-from utee import misc
-print = misc.logger.info
+fromÂ uteeÂ importÂ misc
+printÂ =Â misc.logger.info
 
-model_urls = {
-    'cifar10': 'http://ml.cs.tsinghua.edu.cn/~chenxi/pytorch-models/cifar10-d875770b.pth',
-    'cifar100': 'http://ml.cs.tsinghua.edu.cn/~chenxi/pytorch-models/cifar100-3a55a987.pth',
+model_urlsÂ =Â {
+Â Â Â Â 'cifar10':Â 'http://ml.cs.tsinghua.edu.cn/~chenxi/pytorch-models/cifar10-d875770b.pth',
+Â Â Â Â 'cifar100':Â 'http://ml.cs.tsinghua.edu.cn/~chenxi/pytorch-models/cifar100-3a55a987.pth',
 }
 
-class CIFAR(nn.Module):
-    def __init__(self, features, n_channel, num_classes):
-        super(CIFAR, self).__init__()
-        assert isinstance(features, nn.Sequential), type(features)
-        self.features = features
-        self.classifier = nn.Sequential(
-            nn.Linear(n_channel, num_classes)
-        )
-        print(self.features)
-        print(self.classifier)
+classÂ CIFAR(nn.Module):
+Â Â Â Â defÂ __init__(self,Â features,Â n_channel,Â num_classes):
+Â Â Â Â Â Â Â Â super(CIFAR,Â self).__init__()
+Â Â Â Â Â Â Â Â assertÂ isinstance(features,Â nn.Sequential),Â type(features)
+Â Â Â Â Â Â Â Â self.featuresÂ =Â features
+Â Â Â Â Â Â Â Â self.classifierÂ =Â nn.Sequential(
+Â Â Â Â Â Â Â Â Â Â Â Â nn.Linear(n_channel,Â num_classes)
+Â Â Â Â Â Â Â Â )
+Â Â Â Â Â Â Â Â print(self.features)
+Â Â Â Â Â Â Â Â print(self.classifier)
 
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
+Â Â Â Â defÂ forward(self,Â x):
+Â Â Â Â Â Â Â Â xÂ =Â self.features(x)
+Â Â Â Â Â Â Â Â xÂ =Â x.view(x.size(0),Â -1)
+Â Â Â Â Â Â Â Â xÂ =Â self.classifier(x)
+Â Â Â Â Â Â Â Â returnÂ x
 
-def make_layers(cfg, batch_norm=False):
-    layers = []
-    in_channels = 3
-    for i, v in enumerate(cfg):
-        if v == 'M':
-            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-        else:
-            padding = v[1] if isinstance(v, tuple) else 1
-            out_channels = v[0] if isinstance(v, tuple) else v
-            conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=padding)
-            if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(out_channels, affine=False), nn.ReLU()]
-            else:
-                layers += [conv2d, nn.ReLU()]
-            in_channels = out_channels
-    return nn.Sequential(*layers)
+defÂ make_layers(cfg,Â batch_norm=False):
+Â Â Â Â layersÂ =Â []
+Â Â Â Â in_channelsÂ =Â 3
+Â Â Â Â forÂ i,Â vÂ inÂ enumerate(cfg):
+Â Â Â Â Â Â Â Â ifÂ vÂ ==Â 'M':
+Â Â Â Â Â Â Â Â Â Â Â Â layersÂ +=Â [nn.MaxPool2d(kernel_size=2,Â stride=2)]
+Â Â Â Â Â Â Â Â else:
+Â Â Â Â Â Â Â Â Â Â Â Â paddingÂ =Â v[1]Â ifÂ isinstance(v,Â tuple)Â elseÂ 1
+Â Â Â Â Â Â Â Â Â Â Â Â out_channelsÂ =Â v[0]Â ifÂ isinstance(v,Â tuple)Â elseÂ v
+Â Â Â Â Â Â Â Â Â Â Â Â conv2dÂ =Â nn.Conv2d(in_channels,Â out_channels,Â kernel_size=3,Â padding=padding)
+Â Â Â Â Â Â Â Â Â Â Â Â ifÂ batch_norm:
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â layersÂ +=Â [conv2d,Â nn.BatchNorm2d(out_channels,Â affine=False),Â nn.ReLU()]
+Â Â Â Â Â Â Â Â Â Â Â Â else:
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â layersÂ +=Â [conv2d,Â nn.ReLU()]
+Â Â Â Â Â Â Â Â Â Â Â Â in_channelsÂ =Â out_channels
+Â Â Â Â returnÂ nn.Sequential(*layers)
 
-def cifar10(n_channel, pretrained=None):
-    cfg = [n_channel, n_channel, 'M', 2*n_channel, 2*n_channel, 'M', 4*n_channel, 4*n_channel, 'M', (8*n_channel, 0), 'M']
-    layers = make_layers(cfg, batch_norm=True)
-    model = CIFAR(layers, n_channel=8*n_channel, num_classes=10)
-    if pretrained is not None:
-        m = model_zoo.load_url(model_urls['cifar10'])
-        state_dict = m.state_dict() if isinstance(m, nn.Module) else m
-        assert isinstance(state_dict, (dict, OrderedDict)), type(state_dict)
-        model.load_state_dict(state_dict)
-    return model
+defÂ cifar10(n_channel,Â pretrained=None):
+Â Â Â Â cfgÂ =Â [n_channel,Â n_channel,Â 'M',Â 2*n_channel,Â 2*n_channel,Â 'M',Â 4*n_channel,Â 4*n_channel,Â 'M',Â (8*n_channel,Â 0),Â 'M']
+Â Â Â Â layersÂ =Â make_layers(cfg,Â batch_norm=True)
+Â Â Â Â modelÂ =Â CIFAR(layers,Â n_channel=8*n_channel,Â num_classes=10)
+Â Â Â Â ifÂ pretrainedÂ isÂ notÂ None:
+Â Â Â Â Â Â Â Â mÂ =Â model_zoo.load_url(model_urls['cifar10'])
+Â Â Â Â Â Â Â Â state_dictÂ =Â m.state_dict()Â ifÂ isinstance(m,Â nn.Module)Â elseÂ m
+Â Â Â Â Â Â Â Â assertÂ isinstance(state_dict,Â (dict,Â OrderedDict)),Â type(state_dict)
+Â Â Â Â Â Â Â Â model.load_state_dict(state_dict)
+Â Â Â Â returnÂ model
 
-def cifar100(n_channel, pretrained=None):
-    cfg = [n_channel, n_channel, 'M', 2*n_channel, 2*n_channel, 'M', 4*n_channel, 4*n_channel, 'M', (8*n_channel, 0), 'M']
-    layers = make_layers(cfg, batch_norm=True)
-    model = CIFAR(layers, n_channel=8*n_channel, num_classes=100)
-    if pretrained is not None:
-        m = model_zoo.load_url(model_urls['cifar100'])
-        state_dict = m.state_dict() if isinstance(m, nn.Module) else m
-        assert isinstance(state_dict, (dict, OrderedDict)), type(state_dict)
-        model.load_state_dict(state_dict)
-    return model
-def perturb_image(xs, img):
-  if xs.ndim < 2:
-    xs = np.array([xs])
-  batch = len(xs)
-  imgs = img.repeat(batch, 1, 1, 1)
-  xs = xs.astype(int)
-  count = 0
-  for x in xs:
-    pixels = np.split(x, len(x)/9)
-    for pixel in pixels:
-      x_pos1, y_pos1, red, x_pos2, y_pos2, green, x_pos3, y_pos3, blue= pixel
-      imgs[count, 0, x_pos1, y_pos1] = (red/255.0-0.4914)/0.2023
-      imgs[count, 1, x_pos2, y_pos2] = (green/255.0-0.4822)/0.1994
-      imgs[count, 2, x_pos3, y_pos3] = (blue/255.0-0.4465)/0.2010
-    count += 1
-  return imgs
+defÂ cifar100(n_channel,Â pretrained=None):
+Â Â Â Â cfgÂ =Â [n_channel,Â n_channel,Â 'M',Â 2*n_channel,Â 2*n_channel,Â 'M',Â 4*n_channel,Â 4*n_channel,Â 'M',Â (8*n_channel,Â 0),Â 'M']
+Â Â Â Â layersÂ =Â make_layers(cfg,Â batch_norm=True)
+Â Â Â Â modelÂ =Â CIFAR(layers,Â n_channel=8*n_channel,Â num_classes=100)
+Â Â Â Â ifÂ pretrainedÂ isÂ notÂ None:
+Â Â Â Â Â Â Â Â mÂ =Â model_zoo.load_url(model_urls['cifar100'])
+Â Â Â Â Â Â Â Â state_dictÂ =Â m.state_dict()Â ifÂ isinstance(m,Â nn.Module)Â elseÂ m
+Â Â Â Â Â Â Â Â assertÂ isinstance(state_dict,Â (dict,Â OrderedDict)),Â type(state_dict)
+Â Â Â Â Â Â Â Â model.load_state_dict(state_dict)
+Â Â Â Â returnÂ model
+defÂ perturb_image(xs,Â img):
+Â Â ifÂ xs.ndimÂ <Â 2:
+Â Â Â Â xsÂ =Â np.array([xs])
+Â Â batchÂ =Â len(xs)
+Â Â imgsÂ =Â img.repeat(batch,Â 1,Â 1,Â 1)
+Â Â xsÂ =Â xs.astype(int)
+Â Â countÂ =Â 0
+Â Â forÂ xÂ inÂ xs:
+Â Â Â Â pixelsÂ =Â np.split(x,Â len(x)/9)
+Â Â Â Â forÂ pixelÂ inÂ pixels:
+Â Â Â Â Â Â x_pos1,Â y_pos1,Â red,Â x_pos2,Â y_pos2,Â green,Â x_pos3,Â y_pos3,Â blue=Â pixel
+Â Â Â Â Â Â imgs[count,Â 0,Â x_pos1,Â y_pos1]Â =Â (red/255.0-0.4914)/0.2023
+Â Â Â Â Â Â imgs[count,Â 1,Â x_pos2,Â y_pos2]Â =Â (green/255.0-0.4822)/0.1994
+Â Â Â Â Â Â imgs[count,Â 2,Â x_pos3,Â y_pos3]Â =Â (blue/255.0-0.4465)/0.2010
+Â Â Â Â countÂ +=Â 1
+Â Â returnÂ imgs
 
-def predict_classes(xs, img, target_calss, net, minimize=True):
-  imgs_perturbed = perturb_image(xs, img.clone())
-  input = Variable(imgs_perturbed, volatile=True).cuda()
-  predictions = F.softmax(net(input)).data.cpu().numpy()[:, target_calss]
+defÂ predict_classes(xs,Â img,Â target_calss,Â net,Â minimize=True):
+Â Â imgs_perturbedÂ =Â perturb_image(xs,Â img.clone())
+Â Â inputÂ =Â Variable(imgs_perturbed,Â volatile=True).cuda()
+Â Â predictionsÂ =Â F.softmax(net(input)).data.cpu().numpy()[:,Â target_calss]
 
-  return predictions if minimize else 1 - predictions
+Â Â returnÂ predictionsÂ ifÂ minimizeÂ elseÂ 1Â -Â predictions
 
-def attack_success(x, img, target_calss, net, targeted_attack=False, verbose=False):
+defÂ attack_success(x,Â img,Â target_calss,Â net,Â targeted_attack=False,Â verbose=False):
 
-  attack_image = perturb_image(x, img.clone())
-  input = Variable(attack_image, volatile=True).cuda()
-  confidence = F.softmax(net(input)).data.cpu().numpy()[0]
-  predicted_class = np.argmax(confidence)
+Â Â attack_imageÂ =Â perturb_image(x,Â img.clone())
+Â Â inputÂ =Â Variable(attack_image,Â volatile=True).cuda()
+Â Â confidenceÂ =Â F.softmax(net(input)).data.cpu().numpy()[0]
+Â Â predicted_classÂ =Â np.argmax(confidence)
 
-  if (verbose):
-    print ("Confidence: %.4f"%confidence[target_calss])
-  if (targeted_attack and predicted_class == target_calss) or (not targeted_attack and predicted_class != target_calss):
-    return True
+Â Â ifÂ (verbose):
+Â Â Â Â printÂ ("Confidence:Â %.4f"%confidence[target_calss])
+Â Â ifÂ (targeted_attackÂ andÂ predicted_classÂ ==Â target_calss)Â orÂ (notÂ targeted_attackÂ andÂ predicted_classÂ !=Â target_calss):
+Â Â Â Â returnÂ True
 
-def attack(img, label, net, target=None, pixels=1, maxiter=75, popsize=400, verbose=False):
+defÂ attack(img,Â label,Â net,Â target=None,Â pixels=1,Â maxiter=75,Â popsize=400,Â verbose=False):
 
-  targeted_attack = target is not None
-  target_calss = target if targeted_attack else label
-  bounds = [(0,32), (0,32),(0,255), (0,32), (0,32),(0,255),(0,32), (0,32),(0,255)] * pixels
-  popmul = max(1, popsize//len(bounds))
-  predict_fn = lambda xs: predict_classes(xs, img, target_calss, net, target is None)
-  callback_fn = lambda x, convergence: attack_success(x, img, target_calss, net, targeted_attack, verbose)
-  inits = np.zeros([popmul*len(bounds), len(bounds)])
-  for init in inits:
-    for i in range(pixels):
-      init[i*5+0] = np.random.random()*32
-      init[i*5+1] = np.random.random()*32
-      init[i*5+2] = np.random.normal(128,127)
-      init[i*5+3] = np.random.random()*32
-      init[i*5+4] = np.random.random()*32
-      init[i*5+5] = np.random.normal(128,127)
-      init[i*5+6] = np.random.random()*32
-      init[i*5+7] = np.random.random()*32
-      init[i*5+8] = np.random.normal(128,127)
-  attack_result = differential_evolution(predict_fn, bounds, maxiter=maxiter, popsize=popmul,
-    recombination=1, atol=-1, callback=callback_fn, polish=False, init=inits)
-  attack_image = perturb_image(attack_result.x, img)
-  attack_var = Variable(attack_image, volatile=True).cuda()
-  predicted_probs = F.softmax(net(attack_var)).data.cpu().numpy()[0]
-  predicted_class = np.argmax(predicted_probs)
-  if (not targeted_attack and predicted_class != label) or (targeted_attack and predicted_class == target_calss):
-    return 1, attack_result.x.astype(int)
-  return 0, [None]
+Â Â targeted_attackÂ =Â targetÂ isÂ notÂ None
+Â Â target_calssÂ =Â targetÂ ifÂ targeted_attackÂ elseÂ label
+Â Â boundsÂ =Â [(0,32),Â (0,32),(0,255),Â (0,32),Â (0,32),(0,255),(0,32),Â (0,32),(0,255)]Â *Â pixels
+Â Â popmulÂ =Â max(1,Â popsize//len(bounds))
+Â Â predict_fnÂ =Â lambdaÂ xs:Â predict_classes(xs,Â img,Â target_calss,Â net,Â targetÂ isÂ None)
+Â Â callback_fnÂ =Â lambdaÂ x,Â convergence:Â attack_success(x,Â img,Â target_calss,Â net,Â targeted_attack,Â verbose)
+Â Â initsÂ =Â np.zeros([popmul*len(bounds),Â len(bounds)])
+Â Â forÂ initÂ inÂ inits:
+Â Â Â Â forÂ iÂ inÂ range(pixels):
+Â Â Â Â Â Â init[i*5+0]Â =Â np.random.random()*32
+Â Â Â Â Â Â init[i*5+1]Â =Â np.random.random()*32
+Â Â Â Â Â Â init[i*5+2]Â =Â np.random.normal(128,127)
+Â Â Â Â Â Â init[i*5+3]Â =Â np.random.random()*32
+Â Â Â Â Â Â init[i*5+4]Â =Â np.random.random()*32
+Â Â Â Â Â Â init[i*5+5]Â =Â np.random.normal(128,127)
+Â Â Â Â Â Â init[i*5+6]Â =Â np.random.random()*32
+Â Â Â Â Â Â init[i*5+7]Â =Â np.random.random()*32
+Â Â Â Â Â Â init[i*5+8]Â =Â np.random.normal(128,127)
+Â Â attack_resultÂ =Â differential_evolution(predict_fn,Â bounds,Â maxiter=maxiter,Â popsize=popmul,
+Â Â Â Â recombination=1,Â atol=-1,Â callback=callback_fn,Â polish=False,Â init=inits)
+Â Â attack_imageÂ =Â perturb_image(attack_result.x,Â img)
+Â Â attack_varÂ =Â Variable(attack_image,Â volatile=True).cuda()
+Â Â predicted_probsÂ =Â F.softmax(net(attack_var)).data.cpu().numpy()[0]
+Â Â predicted_classÂ =Â np.argmax(predicted_probs)
+Â Â ifÂ (notÂ targeted_attackÂ andÂ predicted_classÂ !=Â label)Â orÂ (targeted_attackÂ andÂ predicted_classÂ ==Â target_calss):
+Â Â Â Â returnÂ 1,Â attack_result.x.astype(int)
+Â Â returnÂ 0,Â [None]
 
-def attack_all(net, loader, pixels=1, targeted=False, maxiter=75, popsize=400, verbose=False):
+defÂ attack_all(net,Â loader,Â pixels=1,Â targeted=False,Â maxiter=75,Â popsize=400,Â verbose=False):
 
-  correct = 0
-  success = 0
+Â Â correctÂ =Â 0
+Â Â successÂ =Â 0
 
-  for batch_idx, (input, target) in enumerate(loader):
+Â Â forÂ batch_idx,Â (input,Â target)Â inÂ enumerate(loader):
 
-    img_var = Variable(input, volatile=True).cuda()
-    prior_probs = F.softmax(net(img_var))
-    _, indices = torch.max(prior_probs, 1)
-    
-    if target[0] != indices.data.cpu()[0]:
-      continue
+Â Â Â Â img_varÂ =Â Variable(input,Â volatile=True).cuda()
+Â Â Â Â prior_probsÂ =Â F.softmax(net(img_var))
+Â Â Â Â _,Â indicesÂ =Â torch.max(prior_probs,Â 1)
+Â Â Â Â 
+Â Â Â Â ifÂ target[0]Â !=Â indices.data.cpu()[0]:
+Â Â Â Â Â Â continue
 
-    correct += 1
-    target = target.numpy()
+Â Â Â Â correctÂ +=Â 1
+Â Â Â Â targetÂ =Â target.numpy()
 
-    targets = [None] if not targeted else range(10)
+Â Â Â Â targetsÂ =Â [None]Â ifÂ notÂ targetedÂ elseÂ range(10)
 
-    for target_calss in targets:
-      if (targeted):
-        if (target_calss == target[0]):
-          continue
-      
-      flag, x = attack(input, target[0], net, target_calss, pixels=pixels, maxiter=maxiter, popsize=popsize, verbose=verbose)
+Â Â Â Â forÂ target_calssÂ inÂ targets:
+Â Â Â Â Â Â ifÂ (targeted):
+Â Â Â Â Â Â Â Â ifÂ (target_calssÂ ==Â target[0]):
+Â Â Â Â Â Â Â Â Â Â continue
+Â Â Â Â Â Â 
+Â Â Â Â Â Â flag,Â xÂ =Â attack(input,Â target[0],Â net,Â target_calss,Â pixels=pixels,Â maxiter=maxiter,Â popsize=popsize,Â verbose=verbose)
 
-      success += flag
-      if (targeted):
-        success_rate = float(success)/(9*correct)
-      else:
-        success_rate = float(success)/correct
+Â Â Â Â Â Â successÂ +=Â flag
+Â Â Â Â Â Â ifÂ (targeted):
+Â Â Â Â Â Â Â Â success_rateÂ =Â float(success)/(9*correct)
+Â Â Â Â Â Â else:
+Â Â Â Â Â Â Â Â success_rateÂ =Â float(success)/correct
 
-      if flag == 1:
-        print ("success rate: %.4f (%d/%d) [(x1,y1) = (%d,%d),(x2,y2) = (%d,%d),(x3,y3) = (%d,%d) and (R,G,B)=(%d,%d,%d)]"%(
-          success_rate, success, correct, x[0],x[1],x[3],x[4],x[6],x[7],x[2],x[5],x[8]))
-    
-    if correct == args.samples:
-      break
+Â Â Â Â Â Â ifÂ flagÂ ==Â 1:
+Â Â Â Â Â Â Â Â printÂ ("successÂ rate:Â %.4fÂ (%d/%d)Â [(x1,y1)Â =Â (%d,%d),(x2,y2)Â =Â (%d,%d),(x3,y3)Â =Â (%d,%d)Â andÂ (R,G,B)=(%d,%d,%d)]"%(
+Â Â Â Â Â Â Â Â Â Â success_rate,Â success,Â correct,Â x[0],x[1],x[3],x[4],x[6],x[7],x[2],x[5],x[8]))
+Â Â Â Â 
+Â Â Â Â ifÂ correctÂ ==Â args.samples:
+Â Â Â Â Â Â break
 
-  return success_rate
+Â Â returnÂ success_rate
 
-def main():
+defÂ main():
 
-  print ("==> Loading data and model...")
-  tranfrom_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-  test_set = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=tranfrom_test)
-  testloader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=True, num_workers=2)
+Â Â printÂ ("==>Â LoadingÂ dataÂ andÂ model...")
+Â Â tranfrom_testÂ =Â transforms.Compose([
+Â Â Â Â transforms.ToTensor(),
+Â Â Â Â transforms.Normalize((0.4914,Â 0.4822,Â 0.4465),Â (0.2023,Â 0.1994,Â 0.2010)),
+Â Â Â Â ])
+Â Â test_setÂ =Â torchvision.datasets.CIFAR10(root='./data',Â train=False,Â download=True,Â transform=tranfrom_test)
+Â Â testloaderÂ =Â torch.utils.data.DataLoader(test_set,Â batch_size=1,Â shuffle=True,Â num_workers=2)
 
-  class_names = ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
-  net = cifar10(128, pretrained='log/cifar10/best-135.pth')
-  net.cuda()
-  cudnn.benchmark = True
+Â Â class_namesÂ =Â ['plane',Â 'car',Â 'bird',Â 'cat',Â 'deer',Â 'dog',Â 'frog',Â 'horse',Â 'ship',Â 'truck']
+Â Â netÂ =Â cifar10(128,Â pretrained='log/cifar10/best-135.pth')
+Â Â net.cuda()
+Â Â cudnn.benchmarkÂ =Â True
 
-  print ("==> Starting attck...")
+Â Â printÂ ("==>Â StartingÂ attck...")
 
-  results = attack_all(net, testloader, pixels=args.pixels, targeted=args.targeted, maxiter=args.maxiter, popsize=args.popsize, verbose=args.verbose)
-  print ("Final success rate: %.4f"%results)
+Â Â resultsÂ =Â attack_all(net,Â testloader,Â pixels=args.pixels,Â targeted=args.targeted,Â maxiter=args.maxiter,Â popsize=args.popsize,Â verbose=args.verbose)
+Â Â printÂ ("FinalÂ successÂ rate:Â %.4f"%results)
 
-if __name__ == '__main__':
-  main()
+ifÂ __name__Â ==Â '__main__':
+Â Â main()
